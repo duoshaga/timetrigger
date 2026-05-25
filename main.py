@@ -28,6 +28,8 @@ CONFIG_NAME = "reminder_times.txt"
 DEFAULT_TIMES = "10:00|11:15|14:15"
 DEFAULT_MESSAGE = "该休息一下了。"
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+AUTOSTART_APP_NAME = "TimeTrigger"
+RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 @dataclass
@@ -86,6 +88,54 @@ def write_config(config: ReminderConfig) -> None:
         file.write("|".join(config.times))
         file.write("\n")
         file.write(config.message)
+
+
+def autostart_command() -> str:
+    if getattr(sys, "frozen", False):
+        return f'"{os.path.abspath(sys.executable)}"'
+    return f'"{os.path.abspath(sys.executable)}" "{os.path.abspath(__file__)}"'
+
+
+def autostart_supported() -> bool:
+    return sys.platform == "win32"
+
+
+def is_autostart_enabled() -> bool:
+    if not autostart_supported():
+        return False
+
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH) as key:
+            value, _ = winreg.QueryValueEx(key, AUTOSTART_APP_NAME)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return False
+
+    return value == autostart_command()
+
+
+def set_autostart_enabled(enabled: bool) -> None:
+    if not autostart_supported():
+        raise RuntimeError("当前系统暂不支持通过托盘菜单设置开机自启动。")
+
+    import winreg
+
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        RUN_KEY_PATH,
+        0,
+        winreg.KEY_SET_VALUE,
+    ) as key:
+        if enabled:
+            winreg.SetValueEx(key, AUTOSTART_APP_NAME, 0, winreg.REG_SZ, autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_APP_NAME)
+            except FileNotFoundError:
+                pass
 
 
 class ReminderDialog(QDialog):
@@ -160,6 +210,7 @@ class MainWindow(QMainWindow):
 
         ensure_config()
         self.config = read_config()
+        self.autostart_action: QAction | None = None
         self.tray_icon = self.create_tray_icon()
 
         self.time_input = QLineEdit()
@@ -214,9 +265,15 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         show_action = QAction("打开主窗口", self)
         show_action.triggered.connect(self.show_from_tray)
+        self.autostart_action = QAction("开机自启动", self)
+        self.autostart_action.setCheckable(True)
+        self.autostart_action.setEnabled(autostart_supported())
+        self.autostart_action.setChecked(is_autostart_enabled())
+        self.autostart_action.triggered.connect(self.toggle_autostart)
         exit_action = QAction("退出", self)
         exit_action.triggered.connect(self.exit_app)
         menu.addAction(show_action)
+        menu.addAction(self.autostart_action)
         menu.addSeparator()
         menu.addAction(exit_action)
 
@@ -224,6 +281,26 @@ class MainWindow(QMainWindow):
         tray.activated.connect(self.on_tray_activated)
         tray.show()
         return tray
+
+    def toggle_autostart(self, checked: bool) -> None:
+        try:
+            set_autostart_enabled(checked)
+        except Exception as error:
+            if self.autostart_action is not None:
+                self.autostart_action.setChecked(is_autostart_enabled())
+            QMessageBox.warning(self, "设置失败", str(error))
+            return
+
+        if self.autostart_action is not None:
+            self.autostart_action.setChecked(is_autostart_enabled())
+
+        message = "已开启开机自启动。" if checked else "已关闭开机自启动。"
+        self.tray_icon.showMessage(
+            "定时提醒",
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            2200,
+        )
 
     def save_config(self) -> None:
         try:
