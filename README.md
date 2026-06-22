@@ -8,6 +8,7 @@
 - 配置文件与程序或 exe 在同一个目录，文件名为 `reminder_times.txt`。
 - 第一行是提醒时间，格式示例: `10:00|11:15|14:15`。
 - 第二行开始是提醒内容，可以在主窗口中编辑。
+- 主窗口和托盘右键菜单可以开启或暂停提醒。
 - 主窗口点击系统自带的 X 按钮时最小化到托盘。
 - 托盘图标右键菜单可以退出程序。
 - 托盘图标右键菜单可以开启或关闭开机自启动。
@@ -20,7 +21,7 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-第一次运行会自动创建 `reminder_times.txt`。
+第一次运行会自动创建 `reminder_times.txt` 和 `reminder_enabled.txt`。
 
 配置文件示例:
 

@@ -12,3 +12,6 @@ if ($LASTEXITCODE -ne 0) {
 New-Item -ItemType Directory -Force -Path ".\dist_final" | Out-Null
 Copy-Item -LiteralPath (Join-Path $dist "TimeTrigger.exe") -Destination ".\dist_final\TimeTrigger.exe" -Force
 Copy-Item -LiteralPath ".\reminder_times.txt" -Destination ".\dist_final\reminder_times.txt" -Force
+if (Test-Path -LiteralPath ".\reminder_enabled.txt") {
+    Copy-Item -LiteralPath ".\reminder_enabled.txt" -Destination ".\dist_final\reminder_enabled.txt" -Force
+}

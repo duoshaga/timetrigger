@@ -8,6 +8,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QAction, QCloseEvent, QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -25,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 
 CONFIG_NAME = "reminder_times.txt"
+ENABLED_CONFIG_NAME = "reminder_enabled.txt"
 DEFAULT_TIMES = "10:00|11:15|14:15"
 DEFAULT_MESSAGE = "该休息一下了。"
 TIME_PATTERN = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
@@ -48,11 +50,19 @@ def config_path() -> str:
     return os.path.join(app_dir(), CONFIG_NAME)
 
 
+def enabled_config_path() -> str:
+    return os.path.join(app_dir(), ENABLED_CONFIG_NAME)
+
+
 def ensure_config() -> None:
     path = config_path()
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as file:
             file.write(f"{DEFAULT_TIMES}\n{DEFAULT_MESSAGE}")
+
+    enabled_path = enabled_config_path()
+    if not os.path.exists(enabled_path):
+        write_reminders_enabled(True)
 
 
 def parse_times(raw_text: str) -> list[str]:
@@ -88,6 +98,21 @@ def write_config(config: ReminderConfig) -> None:
         file.write("|".join(config.times))
         file.write("\n")
         file.write(config.message)
+
+
+def read_reminders_enabled() -> bool:
+    try:
+        with open(enabled_config_path(), "r", encoding="utf-8") as file:
+            value = file.read().strip().lower()
+    except FileNotFoundError:
+        return True
+
+    return value not in {"0", "false", "off", "no", "disabled"}
+
+
+def write_reminders_enabled(enabled: bool) -> None:
+    with open(enabled_config_path(), "w", encoding="utf-8") as file:
+        file.write("1" if enabled else "0")
 
 
 def autostart_command() -> str:
@@ -210,8 +235,14 @@ class MainWindow(QMainWindow):
 
         ensure_config()
         self.config = read_config()
+        self.reminders_enabled = read_reminders_enabled()
         self.autostart_action: QAction | None = None
+        self.reminders_enabled_action: QAction | None = None
         self.tray_icon = self.create_tray_icon()
+
+        self.enabled_checkbox = QCheckBox("启用提醒")
+        self.enabled_checkbox.setChecked(self.reminders_enabled)
+        self.enabled_checkbox.toggled.connect(self.set_reminders_enabled)
 
         self.time_input = QLineEdit()
         self.time_input.setPlaceholderText("例如: 10:00|11:15|14:15")
@@ -243,6 +274,7 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout()
         layout.addWidget(description)
+        layout.addWidget(self.enabled_checkbox)
         layout.addWidget(self.time_input)
         layout.addWidget(content_label)
         layout.addWidget(self.message_input)
@@ -265,6 +297,10 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         show_action = QAction("打开主窗口", self)
         show_action.triggered.connect(self.show_from_tray)
+        self.reminders_enabled_action = QAction("启用提醒", self)
+        self.reminders_enabled_action.setCheckable(True)
+        self.reminders_enabled_action.setChecked(self.reminders_enabled)
+        self.reminders_enabled_action.triggered.connect(self.set_reminders_enabled)
         self.autostart_action = QAction("开机自启动", self)
         self.autostart_action.setCheckable(True)
         self.autostart_action.setEnabled(autostart_supported())
@@ -273,6 +309,7 @@ class MainWindow(QMainWindow):
         exit_action = QAction("退出", self)
         exit_action.triggered.connect(self.exit_app)
         menu.addAction(show_action)
+        menu.addAction(self.reminders_enabled_action)
         menu.addAction(self.autostart_action)
         menu.addSeparator()
         menu.addAction(exit_action)
@@ -301,6 +338,33 @@ class MainWindow(QMainWindow):
             QSystemTrayIcon.MessageIcon.Information,
             2200,
         )
+
+    def set_reminders_enabled(self, enabled: bool) -> None:
+        if self.reminders_enabled == enabled:
+            self.sync_reminder_enabled_controls()
+            return
+
+        self.reminders_enabled = enabled
+        write_reminders_enabled(enabled)
+        self.sync_reminder_enabled_controls()
+
+        message = "已启用提醒。" if enabled else "已暂停提醒。"
+        self.tray_icon.showMessage(
+            "定时提醒",
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            2200,
+        )
+
+    def sync_reminder_enabled_controls(self) -> None:
+        self.enabled_checkbox.blockSignals(True)
+        self.enabled_checkbox.setChecked(self.reminders_enabled)
+        self.enabled_checkbox.blockSignals(False)
+
+        if self.reminders_enabled_action is not None:
+            self.reminders_enabled_action.blockSignals(True)
+            self.reminders_enabled_action.setChecked(self.reminders_enabled)
+            self.reminders_enabled_action.blockSignals(False)
 
     def save_config(self) -> None:
         try:
@@ -336,6 +400,10 @@ class MainWindow(QMainWindow):
     def check_reminders(self) -> None:
         now = datetime.now()
         today_prefix = now.strftime("%Y-%m-%d")
+
+        if not self.reminders_enabled:
+            self._clear_old_trigger_keys(today_prefix)
+            return
 
         if now.weekday() >= 5:
             self._clear_old_trigger_keys(today_prefix)
